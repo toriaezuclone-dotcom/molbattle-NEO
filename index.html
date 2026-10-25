@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>分子ベイ</title>
+<style>
+:root{--bg:#eef1fb;--fg:#10152b;--panel:rgba(255,255,255,.92);--ac:#e0457b;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0b1020;--fg:#e8ecff;--panel:rgba(22,29,54,.92)}}
+:root[data-theme="dark"]{--bg:#0b1020;--fg:#e8ecff;--panel:rgba(22,29,54,.92)}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif;overflow:hidden}
+canvas{display:block;width:100%;height:100%;touch-action:none}
+#hud{position:fixed;left:0;right:0;top:env(safe-area-inset-top,0px);display:flex;gap:12px;padding:10px;pointer-events:none}
+.bar{flex:1;background:var(--panel);border-radius:10px;padding:6px 10px;font-size:13px}
+.bar i{display:block;height:8px;border-radius:4px;margin-top:4px;background:var(--ac);transition:width .1s}
+#e i{background:#3aa0ff}
+#ov{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(5,8,20,.55)}
+#box{background:var(--panel);border-radius:16px;padding:20px;max-width:340px;width:88%;text-align:center}
+h1{font-size:22px;margin:0 0 6px}p{font-size:13px;margin:6px 0 12px;opacity:.85}
+button{display:block;width:100%;margin:6px 0;padding:11px;border:0;border-radius:10px;background:var(--ac);color:#fff;font-size:15px;cursor:pointer}
+button small{display:block;font-size:11px;opacity:.85}.g{display:grid;grid-template-columns:1fr 1fr;gap:6px}.g button{margin:0;font-size:13px;padding:8px 6px}#box{max-height:88vh;overflow:auto}.fg{text-align:left;font-size:11px;opacity:.9;margin:3px 0}#pv{position:fixed;left:8px;right:8px;bottom:calc(8px + env(safe-area-inset-bottom,0px));background:var(--panel);border-radius:14px;padding:12px;display:none;font-size:13px;max-height:48vh;overflow:auto}#ctl{position:fixed;left:0;right:0;bottom:calc(52px + env(safe-area-inset-bottom,0px));display:none;gap:8px;padding:0 10px}#ctl button{flex:1;width:auto;margin:0;padding:14px 4px;font-size:13px;touch-action:none;user-select:none}#pv button{flex:1;width:auto}#sl{position:fixed;left:0;right:0;bottom:calc(104px + env(safe-area-inset-bottom,0px));display:none;flex-wrap:wrap;gap:6px;padding:0 10px;justify-content:center}#sl button{width:auto;margin:0;padding:8px 10px;font-size:12px;touch-action:none;user-select:none}input{width:100%;box-sizing:border-box;padding:10px;border-radius:10px;border:1px solid #888;margin-bottom:8px;font-size:15px;background:#fff;color:#111}#t{position:fixed;left:0;right:0;bottom:calc(16px + env(safe-area-inset-bottom,0px));text-align:center;font-size:15px;font-weight:700;pointer-events:none;text-shadow:0 1px 4px #000;color:#fff}
+</style></head><body>
+<canvas id="c"></canvas>
+<div id="hud"><div class="bar" id="p"><span></span><i></i></div><div class="bar" id="e"><span></span><i></i></div></div>
+<div id="ctl"><button id="bd">ダッシュ</button><button id="bb">ブレーキ</button></div><div id="sl"></div><div id="pv"></div><div id="t"></div><div id="ov"><div id="box"></div></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const MOL={
+ methane:{n:'メタン CH₄',a:[['C',0,0,0],['H',.63,.63,.63],['H',-.63,-.63,.63],['H',-.63,.63,-.63],['H',.63,-.63,-.63]]},
+ ethanol:{n:'エタノール C₂H₅OH',a:[['C',-1.2,0,0],['C',.3,0,0],['O',.85,1.3,0],['H',1.8,1.2,0],['H',-1.6,1,0],['H',-1.6,-.5,.9],['H',-1.6,-.5,-.9],['H',.7,-.5,.9],['H',.7,-.5,-.9]]},
+ acetic:{n:'酢酸 CH₃COOH',a:[['C',-1.3,0,0],['C',.2,0,0],['O',.8,1.1,0],['O',.9,-1.2,0],['H',1.85,-1.1,0],['H',-1.7,1,0],['H',-1.7,-.5,.9],['H',-1.7,-.5,-.9]]},
+ benzene:{n:'ベンゼン C₆H₆',a:(()=>{const r=[];for(let i=0;i<6;i++){const t=i*Math.PI/3;r.push(['C',1.4*Math.cos(t),0,1.4*Math.sin(t)],['H',2.48*Math.cos(t),0,2.48*Math.sin(t)])}return r})()}
+};
+const M={C:12,H:1,O:16,N:14,Cl:35},COL={C:0x8a90a0,H:0xffffff,O:0xff3b30,N:0x3a6bff,Cl:0x3ddc6a},RAD={C:.4,H:.25,O:.38,N:.38,Cl:.5};
+const FG={OH:['ヒドロキシ基 −OH','水素結合でくっつく。当てた相手を減速（粘着）／常時、近くの相手をゆるく引き寄せる'],COOH:['カルボキシ基 −COOH','酸性。当てた相手に継続ダメージ／常時、近くの相手に弱い酸ダメージ（アミノ基には中和される）'],NH2:['アミノ基 −NH₂','塩基性。酸を中和し、スピンが少しずつ回復'],CO:['カルボニル基 C=O','強い分極。与えるダメージ+20%／約7秒ごとに分極チャージが自動で溜まる（次の一撃×1.8）'],CC2:['二重結合 C=C','反応性が高く、加速力+25%（二重結合が増えるほど強化）'],Ph:['ベンゼン環','共鳴で安定。受けるダメージ−12%'],X:['ハロゲン −Cl','電気陰性度が大きく、衝突の反発が強い'],NO2:['ニトロ基 −NO₂','電子求引性・酸化力。与ダメージ+15%（自分の被ダメージも+10%）。当てるたび追加ダメージ2'],SO3H:['スルホ基 −SO₃H','強酸性。当てた相手に強い継続ダメージ／常時、近くの相手に酸ダメージ（アミノ基で中和）'],TET:['テトラヘドラン 極限ひずみ','最もひずんだ正四面体。与DMG+25%・被DMG+15%'],ADA:['アダマンタン ダイヤ骨格','ダイヤモンドの最小単位。被DMG−15%・吹き飛ばされにくい'],DIA:['ディアマンタン 二連ダイヤ骨格','アダマンタンを連結。被DMG−25%・吹き飛ばされ大幅軽減'],KET:['ケトン 炭素に挟まれたC=O','有機溶媒の性質。与DMG+10%／当てるたび相手の強化を解除して減速'],PRIS:['プリズマン ベンゼン異性体','三角柱のひずんだ籠。与DMG+15%'],TWI:['ツイスタン ねじれ構造','ねじれ舟形の環。吹き飛ばされにくい'],CATE:['カテナン 鎖状の環','機械的結合。被DMG−10%'],ROT:['ロタキサン 軸と環','環が軸を滑る。被DMG−15%・スキルのクールダウン短縮'],FEN:['フェネスタン 平面四配位','常識外れの窓型。被弾時、25%でダメージ無効'],
+CY:['シクロ環 環状構造','環ひずみ（小さい環ほど大）。与ダメージ最大+20%。スキルは開環でひずみ解放'],CAGE:['かご型 キュバン','高ひずみの剛直な構造。与ダメージ+10%、受けるダメージ−20%。スキルでひずみ解放の爆発'],CC3:['三重結合 C≡C','直線的で高エネルギー。ダッシュのクールダウン半減＆ダッシュ力+30%'],alk:['アルキル基（無極性）','軽くて加速+15%、スピン減衰が半分']};
+const fgl=a=>[...a].map(x=>FG[x][0].split(' ')[0]).join('・');
+let tt;function say(s){const e=document.getElementById('t');e.textContent=s;clearTimeout(tt);tt=setTimeout(()=>e.textContent='',2200)}
+const fgs={methane:['alk'],ethanol:['OH'],acetic:['COOH'],benzene:['Ph']};for(const k in fgs)MOL[k].fg=fgs[k];
+Object.assign(MOL,{
+ ethylene:{n:'エチレン C₂H₄',fg:['CC2'],a:[['C',-.67,0,0],['C',.67,0,0],['H',-1.24,.92,0],['H',-1.24,-.92,0],['H',1.24,.92,0],['H',1.24,-.92,0]]},
+ methylamine:{n:'メチルアミン CH₃NH₂',fg:['NH2'],a:[['C',-.75,0,0],['N',.72,0,0],['H',1.1,.9,.3],['H',1.1,-.45,-.85],['H',-1.15,1,0],['H',-1.15,-.5,.9],['H',-1.15,-.5,-.9]]},
+ acetone:{n:'アセトン C₃H₆O',fg:['KET'],a:[['C',0,0,0],['O',0,1.22,0],['C',-1.28,-.75,0],['C',1.28,-.75,0],['H',-1.3,-1.4,.9],['H',-1.3,-1.4,-.9],['H',-2.15,-.1,0],['H',1.3,-1.4,.9],['H',1.3,-1.4,-.9],['H',2.15,-.1,0]]},
+ chloromethane:{n:'クロロメタン CH₃Cl',fg:['X'],a:[['C',0,0,0],['Cl',1.78,0,0],['H',-.36,1.03,0],['H',-.36,-.51,.89],['H',-.36,-.51,-.89]]},
+ phenol:{n:'フェノール C₆H₅OH',fg:['Ph','OH'],a:MOL.benzene.a.map((x,i)=>i==1?['O',2.76,0,0]:x).concat([['H',3.3,.85,0]])},
+ glycine:{n:'グリシン NH₂CH₂COOH',fg:['NH2','COOH'],a:[['C',0,0,0],['N',-.75,1.2,0],['C',1.5,0,0],['O',2.1,1.05,0],['O',2.2,-1.15,0],['H',3.1,-1,0],['H',-.4,-.5,.9],['H',-.4,-.5,-.9],['H',-1.7,1.2,.35],['H',-.5,1.9,-.65]]}
+});
+M.Br=80;M.F=19;M.S=32;M.P=31;M.I=127;M.Na=23;COL.F=0x90e050;COL.S=0xe6c200;COL.P=0xff8000;COL.I=0x940094;COL.Br=0xb5651d;RAD.Br=.55;const MAXS=[100,100,90,82,75];const hpf=w=>.8+1.2/(1+w/50);const mx=n=>MAXS[n]||Math.max(50,75-(n-4)*4);
+(()=>{
+const V=THREE.Vector3,Z=new V(0,0,1),VAL={C:4,O:2,N:3,Cl:1,Br:1,S:6},TG={OH:'OH','=O':'KET',CHO:'CO',COOH:'COOH',NH2:'NH2',Cl:'X',Br:'X',NO2:'NO2',SO3H:'SO3H'},nm=v=>v.clone().normalize();
+const perp=o=>{const u=Z.clone().addScaledVector(o,-Z.dot(o));if(u.length()<.1)u.set(0,1,0);return u.normalize()};
+let id=0;
+function gen(name,sp){
+ const A=[],tags=new Set(),cnt={};
+ const add=(t,p,par,ex=0)=>{const a={t,p,nb:[],ex};if(par){a.nb.push(par);par.nb.push(a);par.ex+=ex}A.push(a);return a};
+ const grp=(c,a,o)=>{const u=perp(o),mk=(t,par,d,l,ex=0)=>add(t,par.p.clone().addScaledVector(d,l),par,ex);
+  if(c=='OH')mk('O',a,o,1.4);else if(c=='=O')mk('O',a,o,1.22,1);else if(c=='NH2')mk('N',a,o,1.45);
+  else if(c=='Cl'||c=='Br')mk(c,a,o,c=='Cl'?1.78:1.94);else if(c=='CH3')mk('C',a,o,1.5);
+  else if(c=='NO2'){const n=mk('N',a,o,1.47);mk('O',n,o.clone().multiplyScalar(.5).addScaledVector(u,.87),1.22,1);mk('O',n,o.clone().multiplyScalar(.5).addScaledVector(u,-.87),1.22)}
+  else if(c=='SO3H'){const s=mk('S',a,o,1.8),w=new V().crossVectors(o,u);[[.9,0],[-.9,0],[0,.9]].forEach(([p,q],i)=>mk('O',s,o.clone().multiplyScalar(.4).addScaledVector(u,p).addScaledVector(w,q),i<2?1.45:1.55,i<2?1:0))}
+  else{const k=mk('C',a,o,1.5);mk('O',k,o.clone().multiplyScalar(.5).addScaledVector(u,.87),1.22,1);if(c=='COOH')mk('O',k,o.clone().multiplyScalar(.5).addScaledVector(u,-.87),1.35)}
+  TG[c]&&(tags.add(TG[c]),cnt[TG[c]]=(cnt[TG[c]]||0)+1)};
+ if(sp.r){const R=[];for(let i=0;i<6;i++){const t=i*Math.PI/3;R.push(add('C',new V(1.4*Math.cos(t),0,1.4*Math.sin(t)),i?R[i-1]:null));R[i].ex=1}
+  R[5].nb.push(R[0]);R[0].nb.push(R[5]);tags.add('Ph');cnt.Ph=1;
+  sp.r.forEach(([i,c])=>{const t=i*Math.PI/3;grp(c,R[i],new V(Math.cos(t),0,Math.sin(t)))})}
+ else{const C=[];for(let i=0;i<sp.n;i++)C.push(add('C',new V(1.25*i,.75*(i%2),0),i?C[i-1]:null));
+  (sp.db||[]).forEach(i=>{C[i].ex++;C[i+1].ex++;tags.add('CC2');cnt.CC2=(cnt.CC2||0)+1});(sp.tb||[]).forEach(i=>{C[i].ex+=2;C[i+1].ex+=2;tags.add('CC3');cnt.CC3=(cnt.CC3||0)+1});
+  sp.g.forEach(([i,c,m=0])=>{const o=m==2?nm(C[i].p.clone().sub(C[i?i-1:1].p)):nm(new V(0,(i%2?1:-1)*(m?.35:1),m*.94));grp(c,C[i],o)})}
+ const H=[];A.forEach(a=>{const k=VAL[a.t]-a.nb.length-a.ex;if(k<=0)return;
+  let d=new V();a.nb.forEach(b=>d.sub(nm(b.p.clone().sub(a.p))));d=d.length()<.1?new V(0,1,0):d.normalize();
+  const [c,s]=k==1?(a.nb.length==1?[.35,.94]:[1,0]):k==2?[.55,.83]:[.35,.94],u=perp(d),w=new V().crossVectors(d,u);
+  for(let j=0;j<k;j++){const th=j*2*Math.PI/k+(k==1?Math.PI/2:0);H.push(['H',...a.p.clone().addScaledVector(d,1.05*c).addScaledVector(u,1.05*s*Math.cos(th)).addScaledVector(w,1.05*s*Math.sin(th)).toArray()])}});
+ const at=[...A.map(a=>[a.t,...a.p.toArray()]),...H],cn={};at.forEach(x=>cn[x[0]]=(cn[x[0]]||0)+1);
+ const f=['C','H','N','O','Cl','Br'].filter(e=>cn[e]).map(e=>e+(cn[e]>1?String(cn[e]).replace(/\d/g,d=>'₀₁₂₃₄₅₆₇₈₉'[d]):'')).join('');
+ MOL['g'+id++]={n:name+' '+f,fg:tags.size?[...tags]:['alk'],a:at,cnt,nd:(sp.db||[]).length};
+}
+const L=[['エタン',{n:2,g:[]}],['プロパン',{n:3,g:[]}],['ブタン',{n:4,g:[]}],['ペンタン',{n:5,g:[]}],['ヘキサン',{n:6,g:[]}],['オクタン',{n:8,g:[]}],
+['プロペン',{n:3,g:[],db:[0]}],['1-ブテン',{n:4,g:[],db:[0]}],['1,3-ブタジエン',{n:4,g:[],db:[0,2]}],
+['メタノール',{n:1,g:[[0,'OH']]}],['1-プロパノール',{n:3,g:[[0,'OH',2]]}],['2-プロパノール',{n:3,g:[[1,'OH']]}],['1-ブタノール',{n:4,g:[[0,'OH',2]]}],['エチレングリコール',{n:2,g:[[0,'OH'],[1,'OH']]}],['グリセリン',{n:3,g:[[0,'OH',2],[1,'OH'],[2,'OH',2]]}],
+['プロピオン酸',{n:2,g:[[1,'COOH',2]]}],['酪酸',{n:3,g:[[2,'COOH',2]]}],['乳酸',{n:2,g:[[1,'COOH',2],[1,'OH']]}],['アラニン',{n:2,g:[[1,'COOH',2],[1,'NH2']]}],
+['エチルアミン',{n:2,g:[[1,'NH2',2]]}],['アセトアルデヒド',{n:1,g:[[0,'CHO']]}],['プロパナール',{n:2,g:[[1,'CHO',2]]}],['2-ブタノン',{n:4,g:[[1,'=O']]}],
+['クロロエタン',{n:2,g:[[1,'Cl',2]]}],['ブロモエタン',{n:2,g:[[1,'Br',2]]}],['ジクロロメタン',{n:1,g:[[0,'Cl',1],[0,'Cl',-1]]}],
+['トルエン',{r:[[0,'CH3']]}],['アニリン',{r:[[0,'NH2']]}],['安息香酸',{r:[[0,'COOH']]}],['クロロベンゼン',{r:[[0,'Cl']]}],['ベンズアルデヒド',{r:[[0,'CHO']]}],
+['カテコール',{r:[[0,'OH'],[1,'OH']]}],['ヒドロキノン',{r:[[0,'OH'],[3,'OH']]}],['サリチル酸',{r:[[0,'OH'],[1,'COOH']]}],['p-クレゾール',{r:[[0,'OH'],[3,'CH3']]}],['ニトロメタン',{n:1,g:[[0,'NO2']]}],['ニトロベンゼン',{r:[[0,'NO2']]}],['p-ニトロフェノール',{r:[[0,'OH'],[3,'NO2']]}],['メタンスルホン酸',{n:1,g:[[0,'SO3H']]}],['ベンゼンスルホン酸',{r:[[0,'SO3H']]}],['アセチレン',{n:2,g:[],tb:[0]}],['プロピン',{n:3,g:[],tb:[0]}],['2-ブチン',{n:4,g:[],tb:[1]}]];
+L.forEach(([n,s])=>gen(n,s));
+const sb=x=>String(x).replace(/\d/g,d=>'₀₁₂₃₄₅₆₇₈₉'[d]);
+[[3,'シクロプロパン'],[4,'シクロブタン'],[5,'シクロペンタン'],[6,'シクロヘキサン'],[8,'シクロオクタン']].forEach(([n,nm])=>{
+ const R=1.52/(2*Math.sin(Math.PI/n)),a=[];
+ for(let i=0;i<n;i++){const t=2*Math.PI*i/n,c=Math.cos(t),s=Math.sin(t);a.push(['C',R*c,0,R*s],['H',(R+.6)*c,.9,(R+.6)*s],['H',(R+.6)*c,-.9,(R+.6)*s])}
+ MOL['g'+id++]={n:nm+' C'+sb(n)+'H'+sb(2*n),fg:['CY'],a,st:({3:1,4:.8,5:.5})[n]||.3,nd:0}});
+{const a=[];for(const x of[-1,1])for(const y of[-1,1])for(const z of[-1,1])a.push(['C',.78*x,.78*y,.78*z],['H',1.41*x,1.41*y,1.41*z]);
+ MOL['g'+id++]={n:'キュバン C₈H₈',fg:['CAGE'],a,nd:0}}
+const hyd=P=>{const a=P.map(p=>['C',...p]);P.forEach(p=>{const c=new V(...p),nb=P.filter(q=>q!==p&&c.distanceTo(new V(...q))<1.7).map(q=>new V(...q).sub(c).normalize()),d=nb.reduce((s,u)=>s.sub(u),new V()).normalize();
+ if(nb.length==3)a.push(['H',...c.clone().addScaledVector(d,1.09).toArray()]);else{const n=new V().crossVectors(nb[0],nb[1]).normalize();[1,-1].forEach(g=>a.push(['H',...c.clone().addScaledVector(d,.63).addScaledVector(n,g*.89).toArray()]))}});return a};
+{const a=[];[[1,1,1],[1,-1,-1],[-1,1,-1],[-1,-1,1]].forEach(v=>a.push(['C',...v.map(x=>.52*x)],['H',...v.map(x=>1.15*x)]));MOL['g'+id++]={n:'テトラヘドラン C₄H₄',fg:['TET'],a,nd:0}}
+{const a=[];for(let k=0;k<3;k++){const t=2*Math.PI*k/3,c=Math.cos(t),s=Math.sin(t);for(const y of[-1,1])a.push(['C',.87*c,.78*y,.87*s],['H',1.92*c,1.08*y,1.92*s])}MOL['g'+id++]={n:'プリズマン C₆H₆',fg:['PRIS'],a,nd:0}}
+{const P=[[1,1,1],[1,-1,-1],[-1,1,-1],[-1,-1,1],[2,0,0],[-2,0,0],[0,2,0],[0,-2,0],[0,0,2],[0,0,-2]].map(v=>v.map(x=>x*.89));MOL['g'+id++]={n:'アダマンタン C₁₀H₁₆',fg:['ADA'],a:hyd(P),nd:0}}
+{const a=[];for(let i=0;i<10;i++){const t=2*Math.PI*i/10;a.push(['C',-1.1+2.1*Math.cos(t),0,2.1*Math.sin(t)],['N',1.1+2.1*Math.cos(t),2.1*Math.sin(t),0])}MOL['g'+id++]={n:'カテナン（モデル）',fg:['CATE'],a,nd:0}}
+{const a=[['S',-5.2,0,0],['S',5.2,0,0]];for(let i=-3;i<=3;i++)a.push(['C',i*1.3,0,0]);for(let i=0;i<10;i++){const t=2*Math.PI*i/10;a.push(['O',0,2*Math.cos(t),2*Math.sin(t)])}MOL['g'+id++]={n:'ロタキサン（モデル）',fg:['ROT'],a,nd:0}}
+})();
+for(const k in MOL){const m=MOL[k];m.mass=m.a.reduce((s,x)=>s+M[x[0]],0);}
+const cv=document.getElementById('c'),R=new THREE.WebGLRenderer({canvas:cv,antialias:true});
+const sc=new THREE.Scene();sc.background=new THREE.Color(0x0b1020);
+const cam=new THREE.PerspectiveCamera(50,1,.1,100);cam.position.set(0,13,15);cam.lookAt(0,0,0);
+sc.add(new THREE.AmbientLight(0xffffff,.6));const dl=new THREE.DirectionalLight(0xffffff,.9);dl.position.set(5,12,6);sc.add(dl);
+const AR=9;
+const dish=new THREE.Mesh(new THREE.CylinderGeometry(AR,AR,.3,64),new THREE.MeshStandardMaterial({color:0x1d2750}));dish.position.y=-.2;sc.add(dish);
+const ring=new THREE.Mesh(new THREE.TorusGeometry(AR,.12,8,80),new THREE.MeshBasicMaterial({color:0x4de2c5}));ring.rotation.x=Math.PI/2;sc.add(ring);
+function build(key,color){
+ const m=MOL[key],g=new THREE.Group(),tilt=new THREE.Group(),spin=new THREE.Group(),mol=new THREE.Group();
+ const cx=m.a.reduce((s,x)=>s+x[1],0)/m.a.length,cy=m.a.reduce((s,x)=>s+x[2],0)/m.a.length,cz=m.a.reduce((s,x)=>s+x[3],0)/m.a.length;
+ const P=m.a.map(x=>new THREE.Vector3(x[1]-cx,x[2]-cy,x[3]-cz));
+ m.a.forEach((x,i)=>{const s=new THREE.Mesh(new THREE.SphereGeometry(RAD[x[0]]||.45,16,12),new THREE.MeshStandardMaterial({color:COL[x[0]]||0xcc66ff}));s.position.copy(P[i]);mol.add(s)});
+ for(let i=0;i<P.length;i++)for(let j=i+1;j<P.length;j++){
+  const hh=(m.a[i][0]==='H')+(m.a[j][0]==='H');if(hh>1||(m.a[i][0]=='O'&&m.a[j][0]=='O'))continue;const d=P[i].distanceTo(P[j]);if(d>(hh?1.3:2))continue;
+  const b=new THREE.Mesh(new THREE.CylinderGeometry(.09,.09,d,8),new THREE.MeshStandardMaterial({color:0xcfd4e6}));
+  b.position.copy(P[i]).add(P[j]).multiplyScalar(.5);b.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),P[j].clone().sub(P[i]).normalize());mol.add(b)}
+ mol.scale.setScalar(Math.min(.85,2.4/Math.max(...P.map(v=>v.length()))));mol.position.y=2.1;
+ const disc=new THREE.Mesh(new THREE.CylinderGeometry(1.3,1.1,.18,32),new THREE.MeshStandardMaterial({color,metalness:.5,roughness:.3}));disc.position.y=.7;
+ const tip=new THREE.Mesh(new THREE.ConeGeometry(.5,.8,16),new THREE.MeshStandardMaterial({color:0xdddddd}));tip.rotation.x=Math.PI;tip.position.y=.4;
+ const stem=new THREE.Mesh(new THREE.CylinderGeometry(.08,.08,.8,8),new THREE.MeshStandardMaterial({color:0xaaaaaa}));stem.position.y=1.1;
+ spin.add(mol,disc,tip,stem);tilt.add(spin);g.add(tilt);sc.add(g);
+ return{g,tilt,spin,key,fg:new Set(m.fg),acid:0,cd:0,dc:0,sh:0,ch:0,bo:0,lf:Math.max(0,1-m.mass/150),cnt:m.cnt||{},st:m.st||0,nd:m.nd||(m.fg.includes('CC2')?1:0),mass:10+Math.sqrt(Math.min(m.mass,300))*.5,x:0,z:0,vx:0,vz:0,sp:mx(m.fg.length)*hpf(m.mass),max:mx(m.fg.length)*hpf(m.mass),t:Math.random()*9,dead:false};
+}
+let me,en,playing=false,inp={x:0,z:0},keys={},last=0;
+function start(key){lkT=0;if(pv){sc.remove(pv.g);pv=null}$('pv').style.display='none';$('hud').style.display='flex';$('ctl').style.display='flex';$('sl').style.display='flex';
+ if(me){sc.remove(me.g);sc.remove(en.g)}
+ const ks=Object.keys(MOL).filter(k=>k!==key);
+ me=build(key,0xe0457b);en=build(ek&&MOL[ek]?ek:ks[Math.floor(Math.random()*ks.length)],0x3aa0ff);
+ me.x=-4;en.x=4;me.z=en.z=0;me.vx=3;en.vx=-3;
+ document.querySelector('#p span').textContent='あなた: '+MOL[me.key].n+'｜'+fgl(me.fg);document.querySelector('#e span').textContent='敵: '+MOL[en.key].n+'｜'+fgl(en.fg);
+ document.getElementById('ov').style.display='none';playing=true;$('sl').innerHTML=sks(me).map((g,i)=>`<button data-i="${i}">${i+1}:${FG[g][0].split(' ')[0]}</button>`).join('');$('sl').querySelectorAll('button').forEach(b=>b.onpointerdown=()=>btn.s=+b.dataset.i);
+}
+let pv=null,pk='',flt='',ek='',lv=1;const btn={},sub=s=>s.replace(/[₀-₉]/g,c=>'₀₁₂₃₄₅₆₇₈₉'.indexOf(c)),$=i=>document.getElementById(i);
+function list(){const q=flt.trim().toLowerCase(),l=$('lst');
+ const ks=Object.keys(MOL).sort((a,b)=>MOL[a].mass-MOL[b].mass).filter(k=>!q||sub(MOL[k].n+fgl(MOL[k].fg)).toLowerCase().includes(q));
+ l.innerHTML=ks.map(k=>`<button data-k="${k}">${MOL[k].n}<small>分子量 ${MOL[k].mass}｜${fgl(MOL[k].fg)}</small></button>`).join('')||'<p>該当なし</p>';
+ l.querySelectorAll('button').forEach(x=>x.onclick=()=>look(x.dataset.k))}
+function menu(msg){
+ if(pv){sc.remove(pv.g);pv=null}
+ $('pv').style.display='none';$('hud').style.display='none';$('ctl').style.display='none';$('sl').style.display='none';
+ const b=$('box');b.innerHTML=`<h1>${msg||'分子ベイ'}</h1><p>① 検索して分子を選ぶ → ② 3Dで形と官能基を確認 → ③ 戦う<br>操作：移動 WASD/矢印・ダッシュ Space・ブレーキ Shift・スキル 1～9/E（スロット制）</p><input id="en" placeholder="🔎 英語名で世界中の物質を取得（例：caffeine, aspirin, glucose）"><button id="fe">PubChemから3D構造を取得</button><p id="fs" class="fg"></p><button id="hb" style="background:#667">📖 効果図鑑（官能基・構造の能力一覧）</button><input id="q" placeholder="名前・化学式・官能基で検索（例：酸、OH、ベンゼン、C6H6）" value="${flt}"><div class="g" id="lst"></div>`;
+ $('fe').onclick=fetchMol;$('hb').onclick=helpPage;$('en').onkeydown=e=>{if(e.key==='Enter')fetchMol()};const i=b.querySelector('#q');i.oninput=()=>{flt=i.value;list()};list();$('ov').style.display='flex'}
+function look(k){
+ if(me){sc.remove(me.g);sc.remove(en.g);me=en=null}
+ pk=k;if(pv)sc.remove(pv.g);
+ pv=build(k,0xe0457b);pv.g.scale.setScalar(1.7);pv.g.position.set(0,-1.2,-3);
+ const m=MOL[k],p=$('pv');$('ov').style.display='none';p.style.display='block';
+ p.innerHTML=`<b>${m.n}</b>　分子量 ${m.mass}<br>`+m.fg.map(x=>`<div class="fg"><b>${FG[x][0]}${(m.cnt&&m.cnt[x]>1)?' ×'+m.cnt[x]:''}</b>：${FG[x][1]}</div>`).join('')+`<div class="fg">最大スピン ${Math.round(mx(m.fg.length)*hpf(m.mass))}｜ドラッグで回転して形を確認</div><div class="fg">敵：<select id="es"><option value="">ランダム</option>${Object.keys(MOL).sort((a,b)=>MOL[a].mass-MOL[b].mass).map(x=>`<option value="${x}"${x==ek?' selected':''}>${MOL[x].n}</option>`).join('')}</select>　強さ：<select id="lv">${[['弱い',.7],['普通',1],['強い',1.3]].map(([n,v])=>`<option value="${v}"${v==lv?' selected':''}>${n}</option>`).join('')}</select></div><div class="fg"><input id="ee" placeholder="敵を英語名で取得（例：aspirin）" style="width:58%;margin:0"> <button id="ef" style="display:inline-block;width:auto;padding:8px 10px;margin:0">取得</button> <span id="est"></span></div><div style="display:flex;gap:8px"><button id="bk" style="background:#667">← 検索へ</button><button id="go">この分子で戦う ▶</button></div>`;
+ p.querySelector('#bk').onclick=()=>menu();p.querySelector('#es').onchange=e=>ek=e.target.value;p.querySelector('#lv').onchange=e=>lv=+e.target.value;p.querySelector('#ef').onclick=fetchEnemy;p.querySelector('#ee').onkeydown=e=>{if(e.key==='Enter')fetchEnemy()};p.querySelector('#go').onclick=()=>start(k)}
+function dash(f,tx,tz,p=1){if(f.dc>0)return;let l=Math.hypot(tx,tz);if(l<.1){tx=f.vx;tz=f.vz;l=Math.hypot(tx,tz)||1}const s=1+.3*K(f,'CC3');f.vx+=tx/l*9*p*s;f.vz+=tz/l*9*p*s;f.dc=Math.max(.8,2.5-1.2*K(f,'CC3'));f.sp-=2}
+function skill(f,o,t){const T=t||[...f.fg][0];f.cdt=f.cdt||{};if((f.cdt[T]||0)>0||f.gcd>0)return;f.cdt[T]=T=='ROT'?5:8;f.gcd=1.5;const d=Math.hypot(o.x-f.x,o.z-f.z)||1,ux=(o.x-f.x)/d,uz=(o.z-f.z)/d,m=[];
+ for(const g of [T]){
+  if(g=='OH'){o.vx-=ux*7;o.vz-=uz*7;m.push('−OH 水素結合で引き寄せ')}
+  if(g=='COOH'){if(d<6&&!o.fg.has('NH2'))o.acid=3;m.push('−COOH 酸のミスト')}
+  if(g=='NH2'){f.sp=Math.min(f.max,f.sp+12);m.push('−NH₂ 中和・回復')}
+  if(g=='CO'){f.ch=6;m.push('C=O 分極チャージ（次の一撃×1.8）')}
+  if(g=='CC2'){f.vx+=ux*12;f.vz+=uz*12;m.push('C=C 付加反応ダッシュ')}
+  if(g=='Ph'){f.sh=1+K(f,'Ph');m.push('ベンゼン環 共鳴シールド')}
+  if(g=='X'){if(d<6){o.vx+=ux*6;o.vz+=uz*6}m.push('−Cl 衝撃波')}
+  if(g=='TET'){if(d<6)o.sp-=18;f.sp-=8;m.push('テトラヘドラン 極限ひずみ解放')}
+  if(g=='ADA'||g=='DIA'){f.sh=g=='DIA'?5:4;m.push('ダイヤ骨格 硬化')}
+  if(g=='KET'){o.sh=o.ch=o.bo=0;o.vx*=.5;o.vz*=.5;m.push('ケトン 溶解（相手の強化解除・減速）')}
+  if(g=='PRIS'){f.sh=4;f.sp-=3;m.push('プリズマン ベンゼンへ異性化（防御）')}
+  if(g=='TWI'){if(d<6){o.sp-=7;const t=o.vx;o.vx=-o.vz;o.vz=t}m.push('ツイスタン ねじれ攻撃')}
+  if(g=='CATE'){lkT=3;m.push('カテナン 環がつながり引き合う')}
+  if(g=='ROT'){f.sh=1.5;f.vx+=-uz*10;f.vz+=ux*10;m.push('ロタキサン シャトリング')}
+  if(g=='FEN'){[f.x,o.x]=[o.x,f.x];[f.z,o.z]=[o.z,f.z];m.push('フェネスタン 位置交換')}
+  if(g=='CY'){if(d<6){o.sp-=10*f.st*K(f,'CY');o.vx+=ux*3;o.vz+=uz*3}f.sp-=2;m.push('シクロ環 開環でひずみ解放')}
+  if(g=='CAGE'){if(d<6){o.sp-=14;o.vx+=ux*5;o.vz+=uz*5}f.sp-=5;m.push('キュバン かご型ひずみ解放')}
+  if(g=='CC3'){f.vx+=ux*15;f.vz+=uz*15;m.push('C≡C 三重結合ラッシュ')}
+  if(g=='NO2'){if(d<6){o.sp-=9;o.vx+=ux*4;o.vz+=uz*4}f.sp-=4;m.push('−NO₂ 酸化爆発')}if(g=='SO3H'){if(d<7&&!o.fg.has('NH2')){o.acid=5;o.as=1.6}m.push('−SO₃H 強酸ミスト')}
+  if(g=='alk'){f.bo=3;m.push('無極性 軽量ブースト')}}
+ say((f===me?'あなた':'敵')+'のスキル：'+m.join('・'))}
+const fml=A=>{const c={};A.forEach(x=>c[x[0]]=(c[x[0]]||0)+1);const r=e=>e=='C'?0:e=='H'?1:2;return Object.keys(c).sort((a,b)=>r(a)-r(b)||a.localeCompare(b)).map(e=>e+(c[e]>1?String(c[e]).replace(/\d/g,d=>'₀₁₂₃₄₅₆₇₈₉'[d]):'')).join('')};
+function detect(A,B){
+ const adj=A.map(()=>[]);B.forEach(([a,b,o])=>{adj[a].push([b,o]);adj[b].push([a,o])});
+ const el=i=>A[i][0],nH=i=>adj[i].filter(([j])=>el(j)=='H').length,C={},T={add:t=>{C[t]=(C[t]||0)+1},delete:t=>{delete C[t]},get size(){return Object.keys(C).length}},ord=(u,v)=>adj[u].find(([j])=>j==v)[1];
+ A.forEach((x,i)=>{
+  if(x[0]=='C'&&adj[i].some(([j,o])=>el(j)=='O'&&o==2))T.add(adj[i].some(([j,o])=>el(j)=='O'&&o==1&&nH(j)>0)?'COOH':adj[i].filter(([j])=>el(j)=='C').length==2?'KET':'CO');
+  if(x[0]=='O'&&nH(i)==1&&adj[i].length==2){const c=adj[i].find(([j])=>el(j)!='H')[0];if(!adj[c].some(([j,o])=>el(j)=='O'&&o==2))T.add('OH')}
+  if(x[0]=='N'&&nH(i)==2)T.add('NH2');
+  if(x[0]=='N'&&adj[i].filter(([j])=>el(j)=='O').length>=2&&adj[i].some(([j])=>el(j)=='C'))T.add('NO2');if(x[0]=='S'&&adj[i].filter(([j])=>el(j)=='O').length>=3&&adj[i].some(([j])=>el(j)=='C'))T.add('SO3H');
+  if(['F','Cl','Br','I'].includes(x[0]))T.add('X')});
+ const cc=B.filter(([a,b])=>el(a)=='C'&&el(b)=='C'),aro=new Set(),cand=[],key=(a,b)=>a<b?a+','+b:b+','+a;
+ cc.forEach(([a,b])=>{const par={[a]:-1},q=[a];
+  while(q.length){const u=q.shift();for(const [v] of adj[u]){if(el(v)!='C'||par[v]!==undefined||(u==a&&v==b))continue;par[v]=u;q.push(v)}}
+  if(par[b]===undefined)return;const p=[b];while(p[p.length-1]!=a)p.push(par[p[p.length-1]]);
+  cand.push([key(a,b),p.length]);if(p.length!=6)return;const E=p.map((u,k)=>[u,p[(k+1)%6]]);
+  if(E.filter(([u,v])=>ord(u,v)==2).length==3){if(!aro.has(key(E[0][0],E[0][1])))T.add('Ph');E.forEach(([u,v])=>aro.add(key(u,v)))}});
+ if(cc.some(([a,b,o])=>ord(a,b)==2&&!aro.has(key(a,b))))T.add('CC2');DX.nd=cc.filter(([a,b])=>ord(a,b)==2&&!aro.has(key(a,b))).length;if(DX.nd)C.CC2=DX.nd;const ns=cand.filter(([k,l])=>!aro.has(k)&&l<=8).map(c=>c[1]);DX.st=0;if(ns.length){T.add('CY');DX.st=({3:1,4:.8,5:.5})[Math.min(...ns)]||.3}{const n3=B.filter(([,,o])=>o==3).length;if(n3)C.CC3=n3}if(A.filter(x=>x[0]=='C').length>=8&&A.every((x,i)=>x[0]!='C'||adj[i].filter(([j])=>el(j)=='C').length>=3)&&!B.some(([,,o])=>o==2)){T.add('CAGE');T.delete('CY')}
+ const nC=A.filter(x=>x[0]=='C').length,cn=i=>adj[i].filter(([j])=>el(j)=='C').length,pure=A.every(x=>x[0]=='C'||x[0]=='H'),dbl=B.some(([,,o])=>o>1),rg=cc.length-nC+1;
+ if(pure&&!dbl&&nC>=4&&A.every((x,i)=>x[0]!='C'||cn(i)>=3)){T.delete('CAGE');T.delete('CY');T.add(nC==4?'TET':nC==6?'PRIS':'CAGE')}
+ else if(pure&&!dbl&&rg>=3){T.delete('CY');const c2=cc.filter(([a,b])=>cn(a)==2&&cn(b)==2).length;
+  if(A.some((x,i)=>x[0]=='C'&&cn(i)==4))T.add('FEN');else if(rg>=5&&!c2)T.add('DIA');else if(rg==3&&nC==10)T.add(c2?'TWI':'ADA')}
+ if(C.CY)C.CY=Math.max(1,rg-(C.Ph||0));DX.cnt=C;return T.size?Object.keys(C):['alk']}
+let DX={st:0,nd:0},lkT=0;function parseSDF(t,name){
+ const L=t.split('\n'),na=+L[3].substr(0,3),nb=+L[3].substr(3,3);
+ if(!na||na>200)throw new Error('原子数が多すぎます（上限200）');
+ const A=[],B=[];
+ for(let i=0;i<na;i++){const p=L[4+i].trim().split(/\s+/);A.push([p[3],+p[0],+p[1],+p[2]])}
+ for(let i=0;i<nb;i++){const l=L[4+na+i];B.push([+l.substr(0,3)-1,+l.substr(3,3)-1,+l.substr(6,3)])}
+ const k='pc_'+name.toLowerCase().replace(/\W/g,'_');
+ MOL[k]={n:name+' '+fml(A),fg:detect(A,B),a:A.length>60?A.filter(x=>x[0]!=='H'):A,mass:Math.round(A.reduce((s,x)=>s+(M[x[0]]||30),0)),st:DX.st,nd:DX.nd,cnt:DX.cnt};
+ return k}
+async function fetchMol(){
+ const nm=$('en').value.trim(),st=$('fs');if(!nm)return;st.textContent='取得中…';
+ try{const r=await fetch('https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/'+encodeURIComponent(nm)+'/SDF?record_type=3d');
+  if(!r.ok)throw new Error(r.status==404?'3D構造が見つかりません（綴りを確認、または3D未登録の物質）':'取得エラー '+r.status);
+  const k=parseSDF(await r.text(),nm);st.textContent='';look(k)}
+ catch(e){st.textContent='⚠ '+(e instanceof TypeError?'PubChemに接続できません（ネット接続、またはこのページが外部接続を許可していない可能性）':e.message)}}
+async function fetchEnemy(){
+ const nm=$('ee').value.trim(),st=$('est');if(!nm)return;st.textContent='取得中…';
+ try{const r=await fetch('https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/'+encodeURIComponent(nm)+'/SDF?record_type=3d');
+  if(!r.ok)throw new Error(r.status==404?'3D構造が見つかりません':'取得エラー '+r.status);
+  ek=parseSDF(await r.text(),nm);look(pk);say('敵を設定：'+MOL[ek].n)}
+ catch(e){st.textContent='⚠ '+(e instanceof TypeError?'PubChemに接続できません':e.message)}}
+const SK={OH:'相手を引き寄せ',COOH:'酸のミスト（遠距離でも継続ダメージ）',NH2:'スピンを12回復',CO:'次の一撃×1.8',CC2:'相手へ突進',CC3:'高速ラッシュ',Ph:'2秒間ダメージ70%カット',X:'近くの相手を弾く',alk:'3秒間加速2倍',NO2:'酸化爆発（自分も消耗）',SO3H:'強酸ミスト',CY:'開環で近距離ダメージ',CAGE:'ひずみ解放の爆発',TET:'極限ひずみ解放（大ダメージ・自分も消耗）',ADA:'4秒間硬化',DIA:'5秒間硬化',KET:'相手の強化を解除し減速',PRIS:'ベンゼンへ異性化して防御',TWI:'相手の向きを変えてダメージ',CATE:'3秒間相手と引き合う',ROT:'横滑り＋短い防御',FEN:'相手と位置交換'};
+function helpPage(){$('box').innerHTML='<h1>📖 効果図鑑</h1><p>官能基の効果は常時発動、構造の効果は常時効果＋スキルです。DMG＝ダメージ。</p>'+Object.entries(FG).map(([k,v])=>`<div class="fg"><b>${v[0]}</b>：${v[1]}${SKT.has(k)&&SK[k]?'／<b>スキル</b>：'+SK[k]:''}</div>`).join('')+'<div class="fg"><b>共通</b>：分子量が小さいほど、最大スピン（体力）が最大約1.7倍、与ダメージも最大約+35%になり、スピン減衰が最大60%減り、被DMGも最大20%減ります。官能基が多いほど最大スピンは減ります。操作：ダッシュ Space・ブレーキ Shift・同じ効果を複数持つ分子は、その個数ぶん効果が加算されます（例：−OHが2つなら2倍）。官能基の効果はすべて常時発動。構造に由来する効果（ベンゼン環・環状・かご型など）だけがスキルスロットを持ちます。スキル：効果ごとのスロット（キー1～9／画面ボタン、Eは1番）。各スロットは独立したクールダウンで、連続発動は1.5秒空けます。</div><button id="hk">← 戻る</button>';$('hk').onclick=()=>menu()}
+function _old(msg){
+ const b=document.getElementById('box');
+ b.innerHTML=`<h1>${msg||'分子ベイ'}</h1><p>分子を選んで激突！官能基があなたの能力になります。スピン切れか場外で負け。重い分子ほど強いが遅い。<br>操作: WASD/矢印 または画面ドラッグ</p><div class="g">`+
+ Object.keys(MOL).sort((a,b)=>MOL[a].mass-MOL[b].mass).map(k=>`<button data-k="${k}">${MOL[k].n}<small>分子量 ${MOL[k].mass}｜${fgl(MOL[k].fg)}</small></button>`).join('')+'</div><h1 style="font-size:14px;margin-top:12px">官能基と能力（官能基が多いほど最大スピンは減少）</h1>'+Object.values(FG).map(v=>`<div class="fg"><b>${v[0]}</b>：${v[1]}</div>`).join('');
+ b.querySelectorAll('button').forEach(x=>x.onclick=()=>start(x.dataset.k));
+ document.getElementById('ov').style.display='flex';
+}
+function acc(f,ax,az,dt){const k=16/Math.sqrt(f.mass)*(1+.2*K(f,'CC2'))*(f.fg.has('alk')?1.15:1)*(f.bo>0?2:1);f.vx+=ax*k*dt;f.vz+=az*k*dt}
+const SKT=new Set(['Ph','CY','CAGE','TET','ADA','DIA','PRIS','TWI','CATE','ROT','FEN']),sks=f=>[...f.fg].filter(g=>SKT.has(g));
+const K=(f,t)=>f.fg.has(t)?(f.cnt[t]||1):0;
+const kb=f=>Math.max(.2,1-.3*K(f,'ADA')-.5*K(f,'DIA')-.4*K(f,'TWI'));
+const dmf=(a,b)=>(1+.25*K(a,'TET'))*(1+.15*K(a,'PRIS'))*(1+.1*K(a,'KET'))*(1+.15*K(b,'TET'))*Math.max(.4,1-.15*K(b,'ADA'))*Math.max(.4,1-.25*K(b,'DIA'))*Math.max(.4,1-.1*K(b,'CATE'))*Math.max(.4,1-.15*K(b,'ROT'))*(Math.random()<Math.min(.7,.25*K(b,'FEN'))?0:1);
+function hit(vn,nx,nz,im){
+ const j=-1.45*vn/im*(1+.4*(K(me,'X')+K(en,'X')));
+ me.vx-=j*nx/me.mass*kb(me);me.vz-=j*nz/me.mass*kb(me);en.vx+=j*nx/en.mass*kb(en);en.vz+=j*nz/en.mass*kb(en);
+ const q=Math.abs(vn);
+ me.sp-=q*(.9+.5*en.lf)*(1+.2*K(en,'CO'))*Math.max(.4,1-.12*K(me,'Ph'))*(me.sh>0?.3:1)*(en.ch>0?1.8:1)*(1-.2*me.lf)*(1+.15*K(en,'NO2'))*(1+.1*K(me,'NO2'))*(1+.2*en.st*K(en,'CY'))*(1+.1*K(en,'CAGE'))*Math.max(.4,1-.2*K(me,'CAGE'))*dmf(en,me);
+ en.sp-=q*(.9+.5*me.lf)*(1+.2*K(me,'CO'))*Math.max(.4,1-.12*K(en,'Ph'))*(en.sh>0?.3:1)*(me.ch>0?1.8:1)*(1-.2*en.lf)*(1+.15*K(me,'NO2'))*(1+.1*K(en,'NO2'))*(1+.2*me.st*K(me,'CY'))*(1+.1*K(me,'CAGE'))*Math.max(.4,1-.2*K(en,'CAGE'))*dmf(me,en);me.ch=en.ch=0;
+ const m=[];
+ for(const [a,b,w] of [[me,en,'あなた'],[en,me,'敵']]){
+  if(a.fg.has('OH')){b.vx*=Math.pow(.7,K(a,'OH'));b.vz*=Math.pow(.7,K(a,'OH'));m.push(w+'の−OH：水素結合で粘着')}
+  if(a.fg.has('COOH')){if(b.fg.has('NH2'))m.push('酸＋塩基＝中和！');else{b.acid=3;b.as=K(a,'COOH');m.push(w+'の−COOH：酸性ダメージ')}}
+  if(a.fg.has('SO3H')){if(b.fg.has('NH2'))m.push('強酸＋塩基＝中和！');else{b.acid=5;b.as=1.6*K(a,'SO3H');m.push(w+'の−SO₃H：強酸で継続ダメージ')}}if(a.fg.has('CY'))m.push(w+'のシクロ環：環ひずみで威力UP');if(a.fg.has('CAGE'))m.push(w+'のかご型：ひずみ蓄積で威力UP・被ダメージ軽減');
+  if(a.fg.has('NO2'))m.push(w+'の−NO₂：酸化力で威力UP（反動あり）');
+  if(a.fg.has('KET')){b.sh=b.ch=b.bo=0;b.vx*=Math.pow(.8,K(a,'KET'));b.vz*=Math.pow(.8,K(a,'KET'));m.push(w+'のケトン：溶解で相手の強化を解除')}if(a.fg.has('NO2'))b.sp-=2*K(a,'NO2');
+  if(a.fg.has('CO'))m.push(w+'のC=O：分極で威力UP');
+  if(b.fg.has('Ph'))m.push((b===me?'あなた':'敵')+'：ベンゼン環の共鳴で軽減');
+  if(a.fg.has('X'))m.push(w+'のCl：電気陰性度で強く反発');
+ }
+ if(m.length)say(m.slice(0,2).join(' / '));
+}
+function step(dt){
+ let ix=inp.x,iz=inp.z;
+ if(keys.ArrowLeft||keys.a)ix-=1;if(keys.ArrowRight||keys.d)ix+=1;if(keys.ArrowUp||keys.w)iz-=1;if(keys.ArrowDown||keys.s)iz+=1;
+ const l=Math.hypot(ix,iz);if(l>1){ix/=l;iz/=l}
+ acc(me,ix,iz,dt);me.br=keys.Shift||btn.b;if(keys[' ']||btn.d){dash(me,ix,iz);btn.d=0;keys[' ']=0}sks(me).forEach((g,i)=>{if(keys[String(i+1)]||(i==0&&keys.e)||btn.s===i){skill(me,en,g);keys[String(i+1)]=0;if(i==0)keys.e=0;btn.s=-1}});
+ let dx=me.x-en.x,dz=me.z-en.z,dd=Math.hypot(dx,dz)||1;
+ acc(en,(dx/dd*.9+(Math.random()-.5)*.6)*lv,(dz/dd*.9+(Math.random()-.5)*.6)*lv,dt);if(dd>5&&Math.random()<dt*.5*lv)dash(en,dx,dz,.8);{const s=sks(en);if(s.length&&Math.random()<dt*.15*lv*Math.min(2,s.length))skill(en,me,s[Math.floor(Math.random()*s.length)])}
+ for(const f of[me,en]){f.vx-=f.x*1.2*dt;f.vz-=f.z*1.2*dt;const dm=1-(f.br?5:.6)*dt;f.vx*=dm;f.vz*=dm;f.x+=f.vx*dt;f.z+=f.vz*dt;f.gcd-=dt;if(f.cdt)for(const k in f.cdt)f.cdt[k]-=dt;f.cd-=dt;f.dc-=dt;f.sh-=dt;f.ch-=dt;f.bo-=dt;f.sp-=((f.fg.has('alk')?.25:.5)*(1-.6*f.lf))*dt+(f.br?.6*dt:0);if(f.fg.has('NH2')){f.sp=Math.min(f.max,f.sp+1.2*K(f,'NH2')*dt);f.acid=0}if(f.acid>0){f.sp-=3.5*dt*(f.as||1);f.acid-=dt;if(f.acid<=0)f.as=1}}
+ dx=en.x-me.x;dz=en.z-me.z;dd=Math.hypot(dx,dz)||.001;
+ for(const [a,b] of [[me,en],[en,me]]){const ux=(a.x-b.x)/dd,uz=(a.z-b.z)/dd;
+  if(a.fg.has('OH')&&dd<5){const k=2.5*K(a,'OH')*dt;b.vx+=ux*k;b.vz+=uz*k}
+  if(a.fg.has('COOH')&&dd<4&&!b.fg.has('NH2')&&!(b.acid>.3)){b.acid=.5;b.as=.3*K(a,'COOH')}
+  if(a.fg.has('SO3H')&&dd<5&&!b.fg.has('NH2')&&!(b.acid>.3)){b.acid=.5;b.as=.6*K(a,'SO3H')}
+  if(a.fg.has('CO')){a.chT=(a.chT||6)-dt;if(a.chT<=0){a.ch=3;a.chT=7/K(a,'CO')}}}
+ if(lkT>0){lkT-=dt;const s=Math.max(0,dd-4)*2*dt,ux=dx/dd,uz=dz/dd;me.vx+=ux*s;me.vz+=uz*s;en.vx-=ux*s;en.vz-=uz*s}
+ if(dd<2.6){
+  const nx=dx/dd,nz=dz/dd,ov=2.6-dd,im=1/me.mass+1/en.mass;
+  me.x-=nx*ov*(1/me.mass)/im;me.z-=nz*ov*(1/me.mass)/im;en.x+=nx*ov*(1/en.mass)/im;en.z+=nz*ov*(1/en.mass)/im;
+  const vn=(en.vx-me.vx)*nx+(en.vz-me.vz)*nz;
+  if(vn<0){hit(vn,nx,nz,im);
+   }
+ }
+ for(const f of[me,en]){if(f.sp<=0||Math.hypot(f.x,f.z)>AR)f.dead=true}
+ if(me.dead||en.dead){playing=false;setTimeout(()=>menu(me.dead&&en.dead?'相打ち！':en.dead?'勝利！🎉':'敗北…'),900)}
+}
+function draw(t,dt){$('bd').style.opacity=me.dc>0?.4:1;$('sl').querySelectorAll('button').forEach((b,i)=>{const g=sks(me)[i],c=(me.cdt&&me.cdt[g])||0;b.style.opacity=c>0||me.gcd>0?.4:1;b.textContent=(i+1)+':'+FG[g][0].split(' ')[0]+(c>0?' '+Math.ceil(c):'')});
+ for(const f of[me,en]){
+  const fall=f.dead&&Math.hypot(f.x,f.z)>AR;
+  f.g.position.set(f.x,fall?(f.g.position.y-dt*8):0,f.z);
+  const s=Math.max(f.sp,0)/f.max;f.spin.rotation.y+=(4+s*28)*(1+f.lf*.6)*dt;
+  f.tilt.rotation.z=Math.sin(t*3+f.t)*(1-s)*.5-f.vx*.02;f.tilt.rotation.x=f.vz*.02+Math.cos(t*3.3+f.t)*(1-s)*.4;
+ }
+ document.querySelector('#p i').style.width=Math.max(me.sp,0)/me.max*100+'%';document.querySelector('#e i').style.width=Math.max(en.sp,0)/en.max*100+'%';
+}
+function loop(ts){
+ const t=ts/1000,dt=Math.min(t-last,.05);last=t;
+ if(pv)pv.spin.rotation.y+=dt*.4;if(me){if(playing)step(dt);draw(t,dt)}
+ R.render(sc,cam);requestAnimationFrame(loop);
+}
+function rs(){R.setSize(innerWidth,innerHeight,false);cam.aspect=innerWidth/innerHeight;cam.fov=innerWidth<innerHeight?70:50;cam.updateProjectionMatrix()}
+addEventListener('resize',rs);rs();
+addEventListener('keydown',e=>keys[e.key]=true);addEventListener('keyup',e=>keys[e.key]=false);
+$('bd').onpointerdown=()=>btn.d=1;$('bb').onpointerdown=()=>btn.b=1;$('bb').onpointerup=$('bb').onpointerleave=()=>btn.b=0;
+let ds=null;cv.addEventListener('pointerdown',e=>ds=[e.clientX,e.clientY]);
+cv.addEventListener('pointermove',e=>{if(!ds)return;if(pv){pv.spin.rotation.y+=(e.clientX-ds[0])*.01;pv.tilt.rotation.x+=(e.clientY-ds[1])*.01;ds=[e.clientX,e.clientY];return}inp.x=Math.max(-1,Math.min(1,(e.clientX-ds[0])/60));inp.z=Math.max(-1,Math.min(1,(e.clientY-ds[1])/60))});
+const up=()=>{ds=null;inp.x=inp.z=0};cv.addEventListener('pointerup',up);cv.addEventListener('pointercancel',up);
+menu();requestAnimationFrame(loop);
+</script></body></html>
